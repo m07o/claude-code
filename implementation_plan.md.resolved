@@ -1,0 +1,48 @@
+# Groq/OpenAI Compatibility Translation Bridge
+
+To make the Anthropic SDK natively talk to Groq (and other OpenAI-compatible endpoints), we will implement an interceptor in `src/services/api/client.ts` within the `buildFetch` function.
+
+This bridge will translate requests and responses in real-time without modifying the core Anthropic SDK logic across the entire codebase.
+
+## User Review Required
+
+> [!WARNING]
+> This is a deep modification to the application's core API networking layer. It maps complex data structures (like Tool Definitions and Tool Calls) between two distinct specifications. Please review the mapping strategies below.
+
+## Proposed Changes
+
+### 1. `client.ts` (API Client & Fetch Interceptor)
+
+#### [MODIFY] [client.ts](file:///c:/Users/Mohamed/Desktop/all_about_claude_code/Open-ClaudeCode%20-%20Copy/Open-ClaudeCode/src/services/api/client.ts)
+
+**A. URL Rewrite**
+If the destination URL is an Anthropic `/v1/messages` endpoint but pointing to a custom URL (e.g. `api.groq.com/openai/v1/v1/messages`), we will rewrite the URL to the standard OpenAI-compatible completions endpoint: `/chat/completions`.
+
+**B. Request Payload Translation (Anthropic ➡️ OpenAI)**
+When intercepting outbound `Request` bodies, we will parse the JSON and map the following:
+1. **System Prompt**: Extract the top-level `system` property and unshift it into the `messages` array as a message with `{"role": "system", "content": systemContent}`.
+2. **Anthropic Tools to OpenAI Functions**: Map Anthropic's tool declarations:
+   - Extract `.input_schema` to `.parameters`.
+   - Wrap the object within `{"type": "function", "function": { ... }}` format.
+3. **Model String Cleanup**: Since `llama-3.3-70b-specdec` is recognized locally, we will ensure it goes directly into the OpenAI `model` parameter.
+4. **Remove Anthropic specific arguments** that Groq doesn't support.
+
+**C. Response Payload Translation (OpenAI ➡️ Anthropic)**
+When Groq responds, we will intercept the 200 OK stream, parse the JSON, and map it back to what the Anthropic SDK expects:
+1. Convert `choices[0].message.content` into the Anthropic `content[]` array with block types `[{"type": "text", "text": "..."}]`.
+2. Convert OpenAI `tool_calls` into Anthropic `tool_use` blocks (`type: "tool_use", id: "...", name: "...", input: JSON.parse(arguments)`).
+3. Map `finish_reason` to `stop_reason` (e.g., `tool_calls` -> `tool_use`, `stop` -> `end_turn`).
+4. Fake or translate `usage` statistics (tokens).
+5. Wrap it all in a mock HTTP Response object and return it to the SDK.
+
+## Open Questions
+
+> [!IMPORTANT]
+> 1. **Image Attachments**: The OpenAI Vision API format is slightly different from Anthropic's. Are image attachments expected during this experimental testing phase with Groq, or should I drop/ignore image attachments in the payload translator to prioritize text/tooling logic for now?
+> 2. **Streaming**: Does this integration need to support HTTP streaming (`Transfer-Encoding: chunked`), or is standard single-payload mapping acceptable for the initial run? (Non-streaming is significantly easier to map).
+
+## Verification Plan
+
+### Manual Verification
+1. With `--debug`, we will monitor the Groq requests and confirm they use `/chat/completions` and output OpenAI valid JSON.
+2. We will type a basic prompt in the CLI (or Web UI) and verify we receive a response successfully parsed and displayed on screen, rather than a crash.

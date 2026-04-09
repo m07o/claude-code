@@ -441,9 +441,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       const container = document.getElementById('chat-messages');
       const msg = document.createElement('div');
       msg.className = 'message ' + role;
-      const timeStr = time > 0 ? ` (${time}ms)` : '';
-      const tokensStr = tokens > 0 ? ` • ${tokens} tokens` : '';
-      msg.innerHTML = `<div class="message-content">${escapeHtml(text)}<div class="message-time">${timeStr}${tokensStr}</div></div>`;
+      const timeStr = time > 0 ? \` (\${time}ms)\` : '';
+      const tokensStr = tokens > 0 ? \` • \${tokens} tokens\` : '';
+      msg.innerHTML = \`<div class="message-content">\${escapeHtml(text)}<div class="message-time">\${timeStr}\${tokensStr}</div></div>\`;
       container.appendChild(msg);
       container.scrollTop = container.scrollHeight;
     }
@@ -467,15 +467,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888;">No requests yet</td></tr>';
         return;
       }
-      tbody.innerHTML = requestLog.map(r => `
+      tbody.innerHTML = requestLog.map(r => \`
         <tr>
-          <td>${r.time}</td>
-          <td><span class="model-tag">${r.model.split('/').pop().substring(0, 20)}</span></td>
-          <td class="status-${r.status === '200' ? 'ok' : 'error'}">${r.status}</td>
-          <td>${r.responseTime}ms</td>
-          <td>${r.tokens}</td>
+          <td>\${r.time}</td>
+          <td><span class="model-tag">\${r.model.split('/').pop().substring(0, 20)}</span></td>
+          <td class="status-\${r.status === '200' ? 'ok' : 'error'}">\${r.status}</td>
+          <td>\${r.responseTime}ms</td>
+          <td>\${r.tokens}</td>
         </tr>
-      `).join('');
+      \`).join('');
     }
 
     // Stats

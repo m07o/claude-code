@@ -7,9 +7,9 @@ echo     Stopping Claude Code Proxy...
 echo  ===================================================
 echo.
 
-:: Kill all node processes running proxy.js
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do (
-    echo  [*] Killing process %%a (port 3000)...
+:: Kill process on port 3002
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3002" ^| findstr "LISTENING"') do (
+    echo  [*] Killing process %%a on port 3002...
     taskkill /F /PID %%a >nul 2>&1
 )
 

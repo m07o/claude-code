@@ -1,3 +1,4 @@
 @echo off
 chcp 65001 >nul
-start http://localhost:3002/
+echo Opening dashboard...
+start "" "http://localhost:3002/"

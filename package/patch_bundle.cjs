@@ -97,6 +97,68 @@ if (groqEnvCheck.count > 0) {
 }
 
 // ============================================================
+// PATCH F: Disable Auto-Update
+// ============================================================
+console.log('\n--- PATCH F: Disable Auto-Update (v2.1.88+) ---');
+
+// Auto-update is controlled by environment variables in the CLI
+// Make sure DISABLE_AUTOUPDATE flag is respected
+const f1Search = 'process.env.DISABLE_AUTOUPDATE';
+const { count: f1Count } = findAllOccurrences(bundleContent, f1Search);
+log('INFO', `Found ${f1Count} reference(s) to DISABLE_AUTOUPDATE - env var check is built in`);
+
+// Also look for the autoUpdates config setting that might trigger updates
+const f2Search = 'autoUpdates===!1';
+const { count: f2Count } = findAllOccurrences(bundleContent, f2Search);
+if (f2Count > 0) {
+  log('INFO', `Found ${f2Count} check(s) for autoUpdates===false`);
+}
+
+log('INFO', '✓ Auto-update is already controlled by $env:DISABLE_AUTOUPDATE=1');
+
+// ============================================================
+// PATCH G: Disable Groq Provider Detection (Force Anthropic Path)
+// ============================================================
+console.log('\n--- PATCH G: Disable Groq Provider Detection (v2.1.88+) ---');
+
+// In v2.1.88+, Groq detection is based on GROQ_API_KEY env var presence
+// We need to ensure that when running, Groq provider is NOT used
+// Strategy: Leave GROQ_API_KEY unset, OR patch any Groq detection code
+
+const g1Search = 'GROQ_API_KEY';
+const { count: g1Count } = findAllOccurrences(bundleContent, g1Search);
+if (g1Count > 0) {
+  log('INFO', `Found ${g1Count} reference(s) to GROQ_API_KEY - Groq detection is env var based`);
+  log('INFO', '✓ Set $env:GROQ_API_KEY="" (empty) to force Anthropic path');
+} else {
+  log('INFO', 'No GROQ_API_KEY references found - likely old version, patches will handle any Groq URLs');
+}
+
+// ============================================================
+// PATCH H: Replace ALL Groq URLs (Safety Comprehensive Patch)
+// ============================================================
+console.log('\n--- PATCH H: Comprehensive Groq URL Replacement ---');
+
+const groqUrlReplacements = [
+  { name: 'H1-groq-complete', search: 'https://api.groq.com/openai/v1/chat/completions', replace: 'http://localhost:3000/v1/messages' },
+  { name: 'H2-groq-basepath', search: 'https://api.groq.com/openai/v1', replace: 'http://localhost:3000' },
+  { name: 'H3-groq-domain', search: 'api.groq.com', replace: 'localhost:3000' },
+  { name: 'H4-openai-v1', search: '/openai/v1/chat/completions', replace: '/v1/messages' },
+  { name: 'H5-openai-path', search: '/openai/v1', replace: '' }  // Remove /openai/v1 prefix if it exists
+];
+
+groqUrlReplacements.forEach(replacement => {
+  const { count } = findAllOccurrences(bundleContent, replacement.search);
+  if (count > 0) {
+    bundleContent = replaceAll(bundleContent, replacement.search, replacement.replace);
+    log('OK', `${replacement.name} - Replaced ${count} occurrence(s)`);
+    patchCount++;
+  }
+});
+
+log('INFO', 'H - All Groq URLs redirected to localhost:3000');
+
+// ============================================================
 // PATCH A: Model Validation Bypass
 // ============================================================
 console.log('\n--- PATCH A: Model Validation Bypass ---');

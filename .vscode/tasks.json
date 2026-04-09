@@ -1,0 +1,105 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Proxy Server",
+      "type": "shell",
+      "command": "node",
+      "args": ["proxy.cjs"],
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^.*$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Listening on.*",
+          "endsPattern": "^.*Ready for connections.*"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true,
+        "echo": true
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/package",
+        "env": {
+          "GROQ_API_KEY": "${env:GROQ_API_KEY}",
+          "LOCAL_MODEL_URL": "${env:LOCAL_MODEL_URL:-http://localhost:11434/v1/chat/completions}",
+          "LOCAL_MODEL_NAME": "${env:LOCAL_MODEL_NAME:-llama3.2:1b}",
+          "PORT": "3002",
+          "DEBUG": "0"
+      }
+      }
+    },
+    {
+      "label": "Start Proxy (Debug Mode)",
+      "type": "shell",
+      "command": "node",
+      "args": ["proxy.cjs"],
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^.*$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Listening on.*",
+          "endsPattern": "^.*Ready for connections.*"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true,
+        "echo": true
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/package",
+        "env": {
+          "GROQ_API_KEY": "${env:GROQ_API_KEY}",
+          "LOCAL_MODEL_URL": "${env:LOCAL_MODEL_URL:-http://localhost:11434/v1/chat/completions}",
+          "LOCAL_MODEL_NAME": "${env:LOCAL_MODEL_NAME:-llama3.2:1b}",
+          "PORT": "3002",
+          "DEBUG": "1"
+        }
+      }
+    },
+    {
+      "label": "Open Proxy Dashboard",
+      "type": "shell",
+      "command": "start",
+      "args": ["http://localhost:3002"],
+      "windows": {
+        "command": "cmd",
+        "args": ["/c", "start", "http://localhost:3002"]
+      },
+      "presentation": {
+        "reveal": "silent"
+      }
+    },
+    {
+      "label": "Test Local Model",
+      "type": "shell",
+      "command": "curl",
+      "args": [
+        "-X", "POST",
+        "http://localhost:3002/v1/messages",
+        "-H", "Content-Type: application/json",
+        "-d", "{\"model\":\"claude-local-1b\",\"max_tokens\":50,\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    }
+  ]
+}

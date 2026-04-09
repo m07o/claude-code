@@ -16,7 +16,10 @@
     "url": "https://github.com/anthropics/claude-code/issues"
   },
   "scripts": {
-    "prepare": "node -e \"if (!process.env.AUTHORIZED) { console.error('ERROR: Direct publishing is not allowed.\\nPlease see the release workflow documentation to publish this package.'); process.exit(1); }\""
+    "prepare": "node -e \"if (!process.env.AUTHORIZED) { console.error('ERROR: Direct publishing is not allowed.\\nPlease see the release workflow documentation to publish this package.'); process.exit(1); }\"",
+    "proxy": "node proxy.cjs",
+    "proxy:debug": "DEBUG=1 node proxy.cjs",
+    "proxy:test": "node -e \"const http = require('http'); http.get('http://localhost:3002/health', (r) => { console.log('✓ Proxy running'); process.exit(0); }).on('error', () => { console.error('✗ Proxy not running'); process.exit(1); })\""
   },
   "dependencies": {},
   "optionalDependencies": {

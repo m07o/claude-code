@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Proxy Server",
+      "program": "${workspaceFolder}/package/proxy.cjs",
+      "cwd": "${workspaceFolder}/package",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "env": {
+        "GROQ_API_KEY": "${env:GROQ_API_KEY}",
+        "LOCAL_MODEL_URL": "http://localhost:11434/v1/chat/completions",
+        "LOCAL_MODEL_NAME": "llama3.2:1b",
+        "PORT": "3002",
+        "DEBUG": "1"
+      },
+      "outputCapture": "std"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Run Proxy (Production)",
+      "program": "${workspaceFolder}/package/proxy.cjs",
+      "cwd": "${workspaceFolder}/package",
+      "console": "integratedTerminal",
+      "env": {
+        "GROQ_API_KEY": "${env:GROQ_API_KEY}",
+        "LOCAL_MODEL_URL": "http://localhost:11434/v1/chat/completions",
+        "LOCAL_MODEL_NAME": "llama3.2:1b",
+        "PORT": "3002",
+        "DEBUG": "0"
+      },
+      "outputCapture": "std"
+    }
+  ]
+}

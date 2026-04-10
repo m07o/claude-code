@@ -39,6 +39,8 @@ const MODEL_MAP = {
   'claude-3-opus-latest': 'meta-llama/llama-4-scout-17b-16e-instruct',
 
   // Claude Sonnet → Llama 3.3 70B (balanced)
+  'claude-sonnet-4': 'llama-3.3-70b-versatile',
+  'claude-sonnet-4-0': 'llama-3.3-70b-versatile',
   'claude-sonnet-4-20250514': 'llama-3.3-70b-versatile',
   'claude-3-7-sonnet-latest': 'llama-3.3-70b-versatile',
   'claude-3-7-sonnet-20250219': 'llama-3.3-70b-versatile',
@@ -48,6 +50,8 @@ const MODEL_MAP = {
   'claude-3-sonnet': 'llama-3.3-70b-versatile',
 
   // Claude Haiku → Llama 3.1 8B (fastest, cheapest)
+  'claude-haiku-4': 'llama-3.1-8b-instant',
+  'claude-haiku-4-20250514': 'llama-3.1-8b-instant',
   'claude-3-5-haiku-latest': 'llama-3.1-8b-instant',
   'claude-3-5-haiku-20241022': 'llama-3.1-8b-instant',
   'claude-3-5-haiku': 'llama-3.1-8b-instant',

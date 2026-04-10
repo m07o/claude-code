@@ -64,6 +64,12 @@ const GITHUB_MODELS_URL = 'https://models.inference.ai.azure.com/chat/completion
 const GITHUB_MODELS_TOKEN = process.env.GITHUB_MODELS_TOKEN || '';
 const GITHUB_MODELS_ENABLED = process.env.GITHUB_MODELS_ENABLED === 'true';
 
+// Custom provider configuration (supports ANY OpenAI-compatible API)
+const CUSTOM_ENABLED = process.env.CUSTOM_ENABLED === 'true';
+const CUSTOM_API_KEY = process.env.CUSTOM_API_KEY || '';
+const CUSTOM_BASE_URL = process.env.CUSTOM_BASE_URL || '';
+const CUSTOM_DEFAULT_MODEL = process.env.CUSTOM_DEFAULT_MODEL || '';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODEL MAPPING
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -276,6 +282,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
               <div class="card-sub" id="github-msg">Checking...</div>
             </div>
             <div class="card">
+              <div class="card-title">Custom Provider</div>
+              <div class="card-value" id="custom-status">🔄</div>
+              <div class="card-sub" id="custom-msg">Checking...</div>
+            </div>
+            <div class="card">
               <div class="card-title">Local Model</div>
               <div class="card-value" id="local-status">🔄</div>
               <div class="card-sub" id="local-msg">Checking...</div>
@@ -374,6 +385,19 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
             <div id="settings-msg" style="margin-top:10px;color:#10b981;"></div>
           </div>
 
+          <h2>Custom Provider</h2>
+          <div>
+            <label>Custom API Status</label>
+            <input type="text" id="custom-status-display" placeholder="Disabled" disabled>
+            <div style="color:#888;font-size:11px;margin-top:5px;">💡 Configure in .env file and set PROVIDER=custom to activate</div>
+
+            <label>Custom API URL</label>
+            <input type="text" id="custom-url" placeholder="https://api.example.com/v1/chat/completions" disabled value="Check .env">
+
+            <label>Custom Default Model</label>
+            <input type="text" id="custom-model" placeholder="model-name" disabled value="Check .env">
+          </div>
+
           <h2>Environment</h2>
           <div>
             <label>GROQ_API_KEY</label>
@@ -457,6 +481,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         const data = await resp.json();
         updateStatus('groq', data.groq_api);
         updateStatus('github', data.github_models);
+        updateStatus('custom', data.custom_provider);
         updateStatus('local', data.local_model);
       } catch (e) {
         console.error('Health check failed:', e);
@@ -804,6 +829,9 @@ function mapModel(anthropicModel) {
     if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
       return GITHUB_DEFAULT_MODEL;
     }
+    if (PROVIDER === 'custom' && CUSTOM_ENABLED) {
+      return CUSTOM_DEFAULT_MODEL || DEFAULT_MODEL;
+    }
     return DEFAULT_MODEL;
   }
 
@@ -818,6 +846,10 @@ function mapModel(anthropicModel) {
     if (GITHUB_MODEL_MAP[anthropicModel]) {
       return GITHUB_MODEL_MAP[anthropicModel];
     }
+  } else if (PROVIDER === 'custom' && CUSTOM_ENABLED) {
+    // For custom provider, pass through Claude model names as-is
+    // User configures what model names the custom API accepts
+    return anthropicModel;
   } else {
     // Check Groq model mappings (default provider)
     if (MODEL_MAP[anthropicModel]) {
@@ -833,6 +865,9 @@ function mapModel(anthropicModel) {
   // Unknown Claude model — use provider default
   if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
     return GITHUB_DEFAULT_MODEL;
+  }
+  if (PROVIDER === 'custom' && CUSTOM_ENABLED) {
+    return CUSTOM_DEFAULT_MODEL || DEFAULT_MODEL;
   }
   return DEFAULT_MODEL;
 }
@@ -1062,7 +1097,7 @@ function handleRequest(req, res) {
 
   // Handle GET /health
   if (req.method === 'GET' && pathname === '/health') {
-    const health = { proxy: 'running', port: PORT, groq_api: 'unknown', local_model: 'unknown', github_models: 'unknown' };
+    const health = { proxy: 'running', port: PORT, groq_api: 'unknown', github_models: 'unknown', custom_provider: 'unknown', local_model: 'unknown' };
 
     // Check Groq connectivity
     https.get('https://api.groq.com/openai/v1/models', {
@@ -1073,15 +1108,6 @@ function handleRequest(req, res) {
       checkDone();
     }).on('error', () => { health.groq_api = 'unreachable'; checkDone(); });
 
-    // Check local model connectivity
-    try {
-      const lu = new URL(LOCAL_MODEL_URL);
-      http.get({ hostname: lu.hostname, port: lu.port || 80, path: lu.pathname.split('/').slice(0, -1).join('/') + '/api/tags', timeout: 3000 }, (r) => {
-        health.local_model = r.statusCode === 200 ? 'connected' : 'error_' + r.statusCode;
-        checkDone();
-      }).on('error', () => { health.local_model = 'unreachable'; checkDone(); });
-    } catch(e) { health.local_model = 'unreachable'; checkDone(); }
-
     // Check GitHub Models connectivity
     https.get('https://models.inference.ai.azure.com/models', {
       headers: { 'Authorization': 'Bearer ' + (GITHUB_MODELS_TOKEN || '') },
@@ -1091,8 +1117,32 @@ function handleRequest(req, res) {
       checkDone();
     }).on('error', () => { health.github_models = 'unreachable'; checkDone(); });
 
+    // Check custom provider connectivity
+    if (CUSTOM_ENABLED && CUSTOM_BASE_URL) {
+      try {
+        const cu = new URL(CUSTOM_BASE_URL);
+        const mod = cu.protocol === 'https:' ? https : http;
+        mod.get({ hostname: cu.hostname, port: cu.port || (cu.protocol === 'https:' ? 443 : 80), path: cu.pathname.replace('/chat/completions', '/models'), timeout: 3000 }, (r) => {
+          health.custom_provider = r.statusCode < 400 ? 'connected' : 'error_' + r.statusCode;
+          checkDone();
+        }).on('error', () => { health.custom_provider = 'unreachable'; checkDone(); });
+      } catch(e) { health.custom_provider = 'unreachable'; checkDone(); }
+    } else {
+      health.custom_provider = PROVIDER === 'custom' ? 'not_configured' : 'disabled';
+      checkDone();
+    }
+
+    // Check local model connectivity
+    try {
+      const lu = new URL(LOCAL_MODEL_URL);
+      http.get({ hostname: lu.hostname, port: lu.port || 80, path: lu.pathname.split('/').slice(0, -1).join('/') + '/api/tags', timeout: 3000 }, (r) => {
+        health.local_model = r.statusCode === 200 ? 'connected' : 'error_' + r.statusCode;
+        checkDone();
+      }).on('error', () => { health.local_model = 'unreachable'; checkDone(); });
+    } catch(e) { health.local_model = 'unreachable'; checkDone(); }
+
     let checks = 0;
-    function checkDone() { if (++checks === 3) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
+    function checkDone() { if (++checks === 4) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
     return;
   }
 
@@ -1118,7 +1168,7 @@ function handleRequest(req, res) {
  * Forward request to Groq or Local model API with response translation
  */
 /**
- * Forward request to appropriate provider (Groq, GitHub Models, or Local)
+ * Forward request to appropriate provider (Groq, GitHub Models, Custom, or Local)
  */
 function forwardRequest(mappedModel, openaiReq, res, isStreaming, startTime) {
   if (isLocalModel(mappedModel)) {
@@ -1127,6 +1177,9 @@ function forwardRequest(mappedModel, openaiReq, res, isStreaming, startTime) {
   } else if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
     // Forward to GitHub Models
     forwardToGitHub(openaiReq, res, isStreaming, startTime);
+  } else if (PROVIDER === 'custom' && CUSTOM_ENABLED) {
+    // Forward to custom provider
+    forwardToCustom(openaiReq, res, isStreaming, startTime);
   } else {
     // Forward to Groq (default)
     forwardToGroq(openaiReq, res, isStreaming, startTime);
@@ -1425,6 +1478,111 @@ function forwardToGitHub(openaiReq, res, isStreaming, startTime) {
 }
 
 /**
+ * Forward request to custom OpenAI-compatible API provider
+ */
+function forwardToCustom(openaiReq, res, isStreaming, startTime) {
+  if (!CUSTOM_BASE_URL) {
+    console.error('  [Custom] CUSTOM_BASE_URL not set');
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'configuration_error',
+          message: 'CUSTOM_BASE_URL not configured'
+        }
+      }));
+    }
+    return;
+  }
+
+  // Parse custom URL
+  const url = new URL(CUSTOM_BASE_URL);
+  const isHttps = url.protocol === 'https:';
+  const httpModule = isHttps ? https : http;
+
+  // Compress payload to fix 413 error
+  openaiReq = compressPayload(openaiReq);
+
+  const reqBody = JSON.stringify(openaiReq);
+  const bodySize = Buffer.byteLength(reqBody);
+
+  if (DEBUG) {
+    console.log(`  [Request] Body size: ${(bodySize / 1024).toFixed(1)} KB`);
+    console.log(`  [Request] Messages: ${openaiReq.messages.length}`);
+  }
+  console.log(`  [Custom Provider] URL: ${url.hostname}${url.pathname}`);
+  console.log(`  [Custom Provider] Model: ${openaiReq.model}`);
+  console.log(`  [Custom Provider] Size: ${bodySize} bytes, Stream: ${isStreaming}`);
+
+  // Build headers
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(reqBody),
+    'User-Agent': 'Anthropic-to-OpenAI-Proxy/3.0'
+  };
+
+  // Add API key if configured
+  if (CUSTOM_API_KEY) {
+    headers['Authorization'] = `Bearer ${CUSTOM_API_KEY}`;
+  }
+
+  const options = {
+    hostname: url.hostname,
+    port: url.port || (isHttps ? 443 : 80),
+    path: url.pathname + (url.search || ''),
+    method: 'POST',
+    headers
+  };
+
+  const customReq = httpModule.request(options, (customRes) => {
+    if (DEBUG) console.log(`  [Custom Provider] Status: ${customRes.statusCode}`);
+
+    // Handle non-200 responses
+    if (customRes.statusCode !== 200) {
+      let errorBody = '';
+      customRes.on('data', chunk => errorBody += chunk);
+      customRes.on('end', () => {
+        try {
+          const translated = translateOpenAIError(errorBody);
+          res.writeHead(customRes.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(translated));
+          if (DEBUG) console.log(`  [Custom Provider Response Error] Translated - ${Date.now() - startTime}ms`);
+        } catch (e) {
+          res.writeHead(customRes.statusCode, { 'Content-Type': 'application/json' });
+          res.end(errorBody);
+        }
+      });
+      return;
+    }
+
+    if (isStreaming) {
+      handleStreamResponse(customRes, res, startTime, openaiReq);
+    } else {
+      handleNonStreamResponse(customRes, res, startTime);
+    }
+  });
+
+  customReq.on('error', (err) => {
+    console.error('  [Custom Provider Error]', err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: `Custom provider error: ${err.message}`
+        }
+      }));
+    }
+  });
+
+  customReq.setTimeout(TIMEOUT);
+  customReq.write(reqBody);
+  customReq.end();
+}
+
+/**
  * Handle streaming response from Groq - convert SSE to Anthropic format
  * FIXED: streamState is now LOCAL per-request (not global)
  * FIXED: All events now include event: field and ping interval for keep-alive
@@ -1653,7 +1811,7 @@ const server = http.createServer(handleRequest);
 server.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  Anthropic ↔ OpenAI/Groq/GitHub/Local Model Proxy (v3.0)  ║
+║  Anthropic ↔ OpenAI/Groq/GitHub/Custom/Local Proxy (v3.1) ║
 ╚════════════════════════════════════════════════════════════╝
 
   Listening on http://localhost:${PORT}
@@ -1667,7 +1825,8 @@ server.listen(PORT, () => {
 
   Features:
     ✓ Payload compression (fixes 413 error)
-    ✓ Multi-provider support (Groq, GitHub Models, Local)
+    ✓ Multi-provider support (Groq, GitHub Models, Custom, Local)
+    ✓ Custom provider (ANY OpenAI-compatible API)
     ✓ Local model support (Ollama, LM Studio, vLLM)
     ✓ Web dashboard with model tester
     ✓ Health check endpoint
@@ -1683,7 +1842,9 @@ server.listen(PORT, () => {
     PROVIDER=${PROVIDER}
     LOCAL_MODEL_URL=${LOCAL_MODEL_URL}
     LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME}${PROVIDER === 'github' ? `
-    GITHUB_MODELS_TOKEN=${GITHUB_MODELS_TOKEN ? '***' + GITHUB_MODELS_TOKEN.substring(GITHUB_MODELS_TOKEN.length - 4) : 'NOT SET'}` : ''}
+    GITHUB_MODELS_TOKEN=${GITHUB_MODELS_TOKEN ? '***' + GITHUB_MODELS_TOKEN.substring(GITHUB_MODELS_TOKEN.length - 4) : 'NOT SET'}` : ''}${PROVIDER === 'custom' ? `
+    CUSTOM_BASE_URL=${CUSTOM_BASE_URL || 'NOT SET'}
+    CUSTOM_DEFAULT_MODEL=${CUSTOM_DEFAULT_MODEL || 'NOT SET'}` : ''}
 
   Ready for connections...
   `);

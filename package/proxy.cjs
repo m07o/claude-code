@@ -13,16 +13,46 @@
  *   CLI (Anthropic format) → localhost:3000 → Groq API (OpenAI format) → Response translation
  */
 
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
-const PORT = process.env.PORT || 3002;
-const DEBUG = process.env.DEBUG === '1';
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOAD .ENV FILE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  envContent.split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const eqIndex = trimmed.indexOf('=');
+    if (eqIndex === -1) return;
+    const key = trimmed.substring(0, eqIndex).trim();
+    let value = trimmed.substring(eqIndex + 1).trim();
+    // Remove quotes if present
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    // Only set if not already in environment (env vars take priority)
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  });
+  console.log('  [.env] Loaded from', envPath);
+}
+
+const PORT = parseInt(process.env.PORT) || 3002;
+const DEBUG = process.env.DEBUG === 'true';
 const TIMEOUT = parseInt(process.env.TIMEOUT || '120000', 10);
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 // Local model configuration
+const LOCAL_MODEL_ENABLED = process.env.LOCAL_MODEL_ENABLED !== 'false';
 const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || 'http://localhost:11434/v1/chat/completions';
 const LOCAL_MODEL_NAME = process.env.LOCAL_MODEL_NAME || 'llama3.2:1b';
 
@@ -63,8 +93,6 @@ const LOCAL_MODEL_MAP = {
   'local-model': LOCAL_MODEL_NAME,
   'claude-3-haiku-local': LOCAL_MODEL_NAME
 };
-
-const DEFAULT_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WEB DASHBOARD HTML - ENHANCED v2
@@ -635,17 +663,28 @@ function anthropicToOpenAI(body) {
     }
   }
 
+  // Handle token limits:
+  // - If .env MAX_TOKENS=0 or not set, don't send max_tokens (use model's full context)
+  // - If user sends max_tokens in request, respect it
+  // - If .env has MAX_TOKENS=4096 (positive), use as default when request doesn't specify one
+  const envMaxTokens = parseInt(process.env.MAX_TOKENS) || 0;
+  const maxTokens = req.max_tokens || (envMaxTokens > 0 ? envMaxTokens : undefined);
+
   // Build OpenAI request
   const openaiReq = {
     messages,
     model: mapModel(req.model),
-    max_tokens: req.max_tokens || 1024,
     stream: req.stream === true,
     temperature: req.temperature,
     top_p: req.top_p,
     top_k: req.top_k,
     stop: req.stop_sequences || undefined
   };
+
+  // Only include max_tokens if defined
+  if (maxTokens !== undefined) {
+    openaiReq.max_tokens = maxTokens;
+  }
 
   // Remove undefined fields
   Object.keys(openaiReq).forEach(k =>
@@ -705,22 +744,22 @@ function flattenAnthropicContent(content) {
 function mapModel(anthropicModel) {
   if (!anthropicModel) return DEFAULT_MODEL;
 
-  // Check local model map first
-  if (LOCAL_MODEL_MAP[anthropicModel]) {
+  // Check local models first
+  if (LOCAL_MODEL_ENABLED && LOCAL_MODEL_MAP[anthropicModel]) {
     return LOCAL_MODEL_MAP[anthropicModel];
   }
 
-  // Check if in known Groq map
+  // Check known Claude-to-Groq mappings
   if (MODEL_MAP[anthropicModel]) {
     return MODEL_MAP[anthropicModel];
   }
 
-  // If not in map, check if it looks like a Groq/OpenAI model (doesn't start with 'claude')
+  // If it doesn't start with 'claude', it might already be a Groq model name — pass it through
   if (!anthropicModel.startsWith('claude')) {
     return anthropicModel;
   }
 
-  // Default fallback
+  // Unknown Claude model — use default
   return DEFAULT_MODEL;
 }
 

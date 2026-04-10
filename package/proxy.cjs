@@ -427,11 +427,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         if (resp.ok) {
           const data = await resp.json();
           const msg = data.content?.[0]?.text || 'No response';
-          addChatMessage('assistant', msg, time, data.usage?.output_tokens || 0);
+          const outputTokens = data.usage?.output_tokens || 0;
+          addChatMessage('assistant', msg, time, outputTokens);
           logRequest(model, '200', time, data.usage);
           stats.success++;
+          stats.totalTime += time;
+          stats.totalTokens += (data.usage?.input_tokens || 0) + outputTokens;
         } else {
-          addChatMessage('assistant', '❌ Error: ' + resp.status);
+          let errorMsg = 'Error ' + resp.status;
+          try {
+            const errData = await resp.json();
+            if (errData.error?.message) {
+              errorMsg += ': ' + errData.error.message;
+            }
+          } catch (e) {
+            // Could not parse error response
+          }
+          addChatMessage('assistant', '❌ ' + errorMsg);
           stats.errors++;
         }
       } catch (e) {
@@ -593,10 +605,20 @@ function anthropicToOpenAI(body) {
   const messages = [];
 
   // Add system prompt as first message if present
+  // Handle system as string or array (Claude Code with prompt caching)
   if (req.system) {
+    let systemContent = req.system;
+    if (typeof req.system === 'string') {
+      systemContent = req.system;
+    } else if (Array.isArray(req.system)) {
+      // Flatten array of content blocks to string
+      systemContent = req.system.map(b => b.text || '').join('\n');
+    } else {
+      systemContent = String(req.system);
+    }
     messages.push({
       role: 'system',
-      content: req.system
+      content: systemContent
     });
   }
 
@@ -621,7 +643,8 @@ function anthropicToOpenAI(body) {
     stream: req.stream === true,
     temperature: req.temperature,
     top_p: req.top_p,
-    top_k: req.top_k
+    top_k: req.top_k,
+    stop: req.stop_sequences || undefined
   };
 
   // Remove undefined fields
@@ -653,7 +676,16 @@ function flattenAnthropicContent(content) {
     if (block.type === 'text' && block.text) {
       parts.push(block.text);
     } else if (block.type === 'tool_result' && block.content) {
-      parts.push(`[Tool Result: ${block.content}]`);
+      // Handle tool_result content as string, array, or object
+      let contentStr = block.content;
+      if (typeof block.content === 'string') {
+        contentStr = block.content;
+      } else if (Array.isArray(block.content)) {
+        contentStr = block.content.map(b => b.text || JSON.stringify(b)).join('\n');
+      } else {
+        contentStr = JSON.stringify(block.content);
+      }
+      parts.push(`[Tool Result: ${contentStr}]`);
     } else if (block.type === 'image') {
       // Skip images, log warning
       if (DEBUG) console.log('  [Warning] Image block skipped (Groq vision unavailable)');
@@ -990,7 +1022,7 @@ function forwardToLocalModel(openaiReq, res, isStreaming, startTime) {
       }
 
       if (isStreaming) {
-        handleStreamResponse(localRes, res, startTime);
+        handleStreamResponse(localRes, res, startTime, openaiReq);
       } else {
         handleNonStreamResponse(localRes, res, startTime);
       }
@@ -998,14 +1030,16 @@ function forwardToLocalModel(openaiReq, res, isStreaming, startTime) {
 
     localReq.on('error', (err) => {
       console.error('  [Local Error]', err.message);
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        type: 'error',
-        error: {
-          type: 'api_error',
-          message: `Local model error: ${err.message}`
-        }
-      }));
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'api_error',
+            message: `Local model error: ${err.message}`
+          }
+        }));
+      }
     });
 
     localReq.setTimeout(TIMEOUT);
@@ -1013,14 +1047,16 @@ function forwardToLocalModel(openaiReq, res, isStreaming, startTime) {
     localReq.end();
   } catch (err) {
     console.error('  [Local Config Error]', err.message);
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      type: 'error',
-      error: {
-        type: 'api_error',
-        message: `Local model config error: ${err.message}`
-      }
-    }));
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: `Local model config error: ${err.message}`
+        }
+      }));
+    }
   }
 }
 
@@ -1083,7 +1119,7 @@ function forwardToGroq(openaiReq, res, isStreaming, startTime) {
     }
 
     if (isStreaming) {
-      handleStreamResponse(groqRes, res, startTime);
+      handleStreamResponse(groqRes, res, startTime, openaiReq);
     } else {
       handleNonStreamResponse(groqRes, res, startTime);
     }
@@ -1091,14 +1127,16 @@ function forwardToGroq(openaiReq, res, isStreaming, startTime) {
 
   groqReq.on('error', (err) => {
     console.error('  [Groq Error]', err.message);
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      type: 'error',
-      error: {
-        type: 'api_error',
-        message: `Groq API error: ${err.message}`
-      }
-    }));
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: `Groq API error: ${err.message}`
+        }
+      }));
+    }
   });
 
   groqReq.setTimeout(TIMEOUT);
@@ -1108,6 +1146,7 @@ function forwardToGroq(openaiReq, res, isStreaming, startTime) {
 
 /**
  * Handle non-streaming response from Groq
+ * FIXED: Added error handler and res.headersSent guards
  */
 function handleNonStreamResponse(groqRes, res, startTime) {
   let body = '';
@@ -1116,24 +1155,42 @@ function handleNonStreamResponse(groqRes, res, startTime) {
     body += chunk;
   });
 
+  groqRes.on('error', (err) => {
+    console.error('  [NonStream Error]', err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: `Stream error: ${err.message}`
+        }
+      }));
+    }
+  });
+
   groqRes.on('end', () => {
     try {
       const openaiResp = JSON.parse(body);
       const anthropicResp = openAIToAnthropic(openaiResp);
 
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (!res.headersSent) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+      }
       res.end(JSON.stringify(anthropicResp));
       if (DEBUG) console.log(`  [Response] Converted to Anthropic format - ${Date.now() - startTime}ms`);
     } catch (err) {
       console.error('  [Response Error]', err.message);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        type: 'error',
-        error: {
-          type: 'api_error',
-          message: `Failed to translate response: ${err.message}`
-        }
-      }));
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'api_error',
+            message: `Failed to translate response: ${err.message}`
+          }
+        }));
+      }
     }
   });
 }
@@ -1141,8 +1198,9 @@ function handleNonStreamResponse(groqRes, res, startTime) {
 /**
  * Handle streaming response from Groq - convert SSE to Anthropic format
  * FIXED: streamState is now LOCAL per-request (not global)
+ * FIXED: All events now include event: field and ping interval for keep-alive
  */
-function handleStreamResponse(groqRes, res, startTime) {
+function handleStreamResponse(groqRes, res, startTime, requestBody) {
   // LOCAL stream state - each streaming connection has its own
   const streamState = {
     blockStarted: false,
@@ -1159,6 +1217,7 @@ function handleStreamResponse(groqRes, res, startTime) {
   });
 
   const messageId = generateMessageId();
+  const responseModel = requestBody?.model || 'claude-3-sonnet';
 
   // Send initial message_start event with usage
   const messageStart = {
@@ -1168,7 +1227,7 @@ function handleStreamResponse(groqRes, res, startTime) {
       type: 'message',
       role: 'assistant',
       content: [],
-      model: 'claude-3-sonnet',
+      model: responseModel,
       stop_reason: null,
       usage: {
         input_tokens: 0,
@@ -1176,7 +1235,16 @@ function handleStreamResponse(groqRes, res, startTime) {
       }
     }
   };
-  res.write(`data: ${JSON.stringify(messageStart)}\n\n`);
+  res.write(`event: message_start\ndata: ${JSON.stringify(messageStart)}\n\n`);
+
+  // Set up ping interval to keep connection alive
+  const pingInterval = setInterval(() => {
+    try {
+      res.write(`event: ping\ndata: {"type":"ping"}\n\n`);
+    } catch (e) {
+      // Client may have disconnected
+    }
+  }, 15000);
 
   let buffer = '';
 
@@ -1194,10 +1262,12 @@ function handleStreamResponse(groqRes, res, startTime) {
         const events = convertOpenAIStreamEvent(line, streamState);
         if (Array.isArray(events)) {
           for (const event of events) {
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
+            const eventType = event.type || 'content_block_delta';
+            res.write(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`);
           }
         } else if (events) {
-          res.write(`data: ${JSON.stringify(events)}\n\n`);
+          const eventType = events.type || 'content_block_delta';
+          res.write(`event: ${eventType}\ndata: ${JSON.stringify(events)}\n\n`);
         }
       } catch (err) {
         console.error('  [Stream Error]', err.message);
@@ -1206,16 +1276,20 @@ function handleStreamResponse(groqRes, res, startTime) {
   });
 
   groqRes.on('end', () => {
+    clearInterval(pingInterval);
+
     // Process any remaining buffer
     if (buffer.trim()) {
       try {
         const events = convertOpenAIStreamEvent(buffer, streamState);
         if (Array.isArray(events)) {
           for (const event of events) {
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
+            const eventType = event.type || 'content_block_delta';
+            res.write(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`);
           }
         } else if (events) {
-          res.write(`data: ${JSON.stringify(events)}\n\n`);
+          const eventType = events.type || 'content_block_delta';
+          res.write(`event: ${eventType}\ndata: ${JSON.stringify(events)}\n\n`);
         }
       } catch (err) {
         console.error('  [Stream Error]', err.message);
@@ -1224,7 +1298,7 @@ function handleStreamResponse(groqRes, res, startTime) {
 
     // Send content_block_stop if we started a block
     if (streamState.blockStarted && !streamState.blockStopped) {
-      res.write(`data: ${JSON.stringify({
+      res.write(`event: content_block_stop\ndata: ${JSON.stringify({
         type: 'content_block_stop',
         index: 0
       })}\n\n`);
@@ -1242,20 +1316,21 @@ function handleStreamResponse(groqRes, res, startTime) {
         output_tokens: streamState.outputTokens
       }
     };
-    res.write(`data: ${JSON.stringify(messageDelta)}\n\n`);
+    res.write(`event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`);
 
     // Send final message_stop
-    res.write(`data: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
+    res.write(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
     res.end();
 
     if (DEBUG) console.log(`  [Stream] Completed - ${Date.now() - startTime}ms (${streamState.outputTokens} tokens)`);
   });
 
   groqRes.on('error', (err) => {
+    clearInterval(pingInterval);
     console.error('  [Stream Error]', err.message);
     // Send error event if client still listening
     try {
-      res.write(`data: ${JSON.stringify({
+      res.write(`event: error\ndata: ${JSON.stringify({
         type: 'error',
         error: {
           type: 'api_error',
@@ -1269,6 +1344,7 @@ function handleStreamResponse(groqRes, res, startTime) {
   });
 
   res.on('close', () => {
+    clearInterval(pingInterval);
     if (DEBUG) console.log('  [Stream] Client disconnected');
   });
 }

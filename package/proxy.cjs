@@ -56,10 +56,19 @@ const LOCAL_MODEL_ENABLED = process.env.LOCAL_MODEL_ENABLED !== 'false';
 const LOCAL_MODEL_URL = process.env.LOCAL_MODEL_URL || 'http://localhost:11434/v1/chat/completions';
 const LOCAL_MODEL_NAME = process.env.LOCAL_MODEL_NAME || 'llama3.2:1b';
 
+// Provider selection
+const PROVIDER = (process.env.PROVIDER || 'groq').toLowerCase();
+
+// GitHub Models configuration
+const GITHUB_MODELS_URL = 'https://models.inference.ai.azure.com/chat/completions';
+const GITHUB_MODELS_TOKEN = process.env.GITHUB_MODELS_TOKEN || '';
+const GITHUB_MODELS_ENABLED = process.env.GITHUB_MODELS_ENABLED === 'true';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODEL MAPPING
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Groq models (default provider)
 const MODEL_MAP = {
   // Claude Opus → Llama 4 Scout (best for code)
   'claude-opus-4': 'meta-llama/llama-4-scout-17b-16e-instruct',
@@ -87,6 +96,35 @@ const MODEL_MAP = {
   'claude-3-5-haiku': 'llama-3.1-8b-instant',
   'claude-3-haiku': 'llama-3.1-8b-instant'
 };
+
+// GitHub Models provider
+const GITHUB_MODEL_MAP = {
+  // Claude Opus → GPT-4o (best available on GitHub)
+  'claude-opus-4': 'gpt-4o',
+  'claude-opus-4-0': 'gpt-4o',
+  'claude-opus-4-20250514': 'gpt-4o',
+  'claude-3-opus': 'gpt-4o',
+  'claude-3-opus-latest': 'gpt-4o',
+
+  // Claude Sonnet → Llama 3.3 70B on GitHub
+  'claude-sonnet-4': 'Llama-3.3-70B-Instruct',
+  'claude-sonnet-4-0': 'Llama-3.3-70B-Instruct',
+  'claude-sonnet-4-20250514': 'Llama-3.3-70B-Instruct',
+  'claude-3-7-sonnet-latest': 'Llama-3.3-70B-Instruct',
+  'claude-3-7-sonnet-20250219': 'Llama-3.3-70B-Instruct',
+  'claude-3-5-sonnet-latest': 'Llama-3.3-70B-Instruct',
+  'claude-3-5-sonnet': 'Llama-3.3-70B-Instruct',
+  'claude-3-sonnet': 'Llama-3.3-70B-Instruct',
+
+  // Claude Haiku → Phi-3.5-mini
+  'claude-haiku-4': 'Phi-3.5-mini-instruct',
+  'claude-haiku-4-20250514': 'Phi-3.5-mini-instruct',
+  'claude-3-5-haiku-latest': 'Phi-3.5-mini-instruct',
+  'claude-3-5-haiku': 'Phi-3.5-mini-instruct',
+  'claude-3-haiku': 'Phi-3.5-mini-instruct',
+};
+
+const GITHUB_DEFAULT_MODEL = 'gpt-4o';
 
 const LOCAL_MODEL_MAP = {
   'claude-local-1b': LOCAL_MODEL_NAME,
@@ -741,25 +779,47 @@ function flattenAnthropicContent(content) {
  * Map Anthropic model names to Groq or local models
  * Falls back to original model name if not in map and looks like a direct model
  */
+/**
+ * Map Anthropic model names to provider models (Groq/GitHub/Local)
+ * Supports provider-aware routing based on PROVIDER environment variable
+ * Falls back to original model name if not in map and looks like a direct model
+ */
 function mapModel(anthropicModel) {
-  if (!anthropicModel) return DEFAULT_MODEL;
+  if (!anthropicModel) {
+    // Return default based on PROVIDER setting
+    if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
+      return GITHUB_DEFAULT_MODEL;
+    }
+    return DEFAULT_MODEL;
+  }
 
-  // Check local models first
+  // Check local models first (always takes priority)
   if (LOCAL_MODEL_ENABLED && LOCAL_MODEL_MAP[anthropicModel]) {
     return LOCAL_MODEL_MAP[anthropicModel];
   }
 
-  // Check known Claude-to-Groq mappings
-  if (MODEL_MAP[anthropicModel]) {
-    return MODEL_MAP[anthropicModel];
+  // Route to provider-specific mappings
+  if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
+    // Check GitHub model mappings
+    if (GITHUB_MODEL_MAP[anthropicModel]) {
+      return GITHUB_MODEL_MAP[anthropicModel];
+    }
+  } else {
+    // Check Groq model mappings (default provider)
+    if (MODEL_MAP[anthropicModel]) {
+      return MODEL_MAP[anthropicModel];
+    }
   }
 
-  // If it doesn't start with 'claude', it might already be a Groq model name — pass it through
+  // If it doesn't start with 'claude', it might already be a provider model name — pass it through
   if (!anthropicModel.startsWith('claude')) {
     return anthropicModel;
   }
 
-  // Unknown Claude model — use default
+  // Unknown Claude model — use provider default
+  if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
+    return GITHUB_DEFAULT_MODEL;
+  }
   return DEFAULT_MODEL;
 }
 
@@ -934,22 +994,38 @@ function handleRequest(req, res) {
         const openaiReq = anthropicToOpenAI(reqBody);
         if (DEBUG) console.log(`  [Translated] Model: ${openaiReq.model}, Stream: ${openaiReq.stream}`);
 
-        // Check if it's a local model (doesn't need API key)
+        // Check API key requirements based on provider
         if (!isLocalModel(openaiReq.model)) {
-          // Check API key only for Groq requests
-          const groqApiKey = process.env.GROQ_API_KEY;
-          if (DEBUG) console.log(`  [Auth] Using GROQ_API_KEY: ${groqApiKey ? groqApiKey.substring(0, 10) + '...' : 'NOT SET'}`);
+          if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
+            // GitHub Models requires token
+            if (!GITHUB_MODELS_TOKEN) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                type: 'error',
+                error: {
+                  type: 'authentication_error',
+                  message: 'Missing GitHub Models token'
+                }
+              }));
+              return;
+            }
+            if (DEBUG) console.log(`  [Auth] Using GITHUB_MODELS_TOKEN: ${GITHUB_MODELS_TOKEN.substring(0, 10)}...`);
+          } else {
+            // Groq requires API key (default provider)
+            const groqApiKey = process.env.GROQ_API_KEY;
+            if (DEBUG) console.log(`  [Auth] Using GROQ_API_KEY: ${groqApiKey ? groqApiKey.substring(0, 10) + '...' : 'NOT SET'}`);
 
-          if (!groqApiKey) {
-            res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              type: 'error',
-              error: {
-                type: 'authentication_error',
-                message: 'Missing API key'
-              }
-            }));
-            return;
+            if (!groqApiKey) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                type: 'error',
+                error: {
+                  type: 'authentication_error',
+                  message: 'Missing API key'
+                }
+              }));
+              return;
+            }
           }
         }
 
@@ -972,7 +1048,7 @@ function handleRequest(req, res) {
 
   // Handle GET /health
   if (req.method === 'GET' && pathname === '/health') {
-    const health = { proxy: 'running', port: PORT, groq_api: 'unknown', local_model: 'unknown' };
+    const health = { proxy: 'running', port: PORT, groq_api: 'unknown', local_model: 'unknown', github_models: 'unknown' };
 
     // Check Groq connectivity
     https.get('https://api.groq.com/openai/v1/models', {
@@ -992,8 +1068,17 @@ function handleRequest(req, res) {
       }).on('error', () => { health.local_model = 'unreachable'; checkDone(); });
     } catch(e) { health.local_model = 'unreachable'; checkDone(); }
 
+    // Check GitHub Models connectivity
+    https.get('https://models.inference.ai.azure.com/models', {
+      headers: { 'Authorization': 'Bearer ' + (GITHUB_MODELS_TOKEN || '') },
+      timeout: 3000
+    }, (r) => {
+      health.github_models = r.statusCode === 200 ? 'connected' : 'error_' + r.statusCode;
+      checkDone();
+    }).on('error', () => { health.github_models = 'unreachable'; checkDone(); });
+
     let checks = 0;
-    function checkDone() { if (++checks === 2) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
+    function checkDone() { if (++checks === 3) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
     return;
   }
 
@@ -1018,12 +1103,18 @@ function handleRequest(req, res) {
 /**
  * Forward request to Groq or Local model API with response translation
  */
+/**
+ * Forward request to appropriate provider (Groq, GitHub Models, or Local)
+ */
 function forwardRequest(mappedModel, openaiReq, res, isStreaming, startTime) {
   if (isLocalModel(mappedModel)) {
     // Forward to local model
     forwardToLocalModel(openaiReq, res, isStreaming, startTime);
+  } else if (PROVIDER === 'github' && GITHUB_MODELS_ENABLED) {
+    // Forward to GitHub Models
+    forwardToGitHub(openaiReq, res, isStreaming, startTime);
   } else {
-    // Forward to Groq
+    // Forward to Groq (default)
     forwardToGroq(openaiReq, res, isStreaming, startTime);
   }
 }
@@ -1232,6 +1323,91 @@ function handleNonStreamResponse(groqRes, res, startTime) {
       }
     }
   });
+}
+
+
+/**
+ * Forward request to GitHub Models API with response translation
+ */
+function forwardToGitHub(openaiReq, res, isStreaming, startTime) {
+  // Get API key from environment
+  const githubToken = GITHUB_MODELS_TOKEN;
+  if (!githubToken) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'GITHUB_MODELS_TOKEN not set' } }));
+    return;
+  }
+
+  // Compress payload to fix 413 error
+  openaiReq = compressPayload(openaiReq);
+
+  const reqBody = JSON.stringify(openaiReq);
+  const bodySize = Buffer.byteLength(reqBody);
+
+  if (DEBUG) {
+    console.log(`  [Request] Body size: ${(bodySize / 1024).toFixed(1)} KB`);
+    console.log(`  [Request] Messages: ${openaiReq.messages.length}`);
+  }
+  console.log(`  [GitHub Models] Size: ${bodySize} bytes, Stream: ${isStreaming}`);
+
+  const options = {
+    hostname: 'models.inference.ai.azure.com',
+    port: 443,
+    path: '/chat/completions',
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${githubToken}`,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(reqBody),
+      'User-Agent': 'Anthropic-to-OpenAI-Proxy/2.0'
+    }
+  };
+
+  const githubReq = https.request(options, (githubRes) => {
+    if (DEBUG) console.log(`  [GitHub Models] Status: ${githubRes.statusCode}`);
+
+    // Handle non-200 responses
+    if (githubRes.statusCode !== 200) {
+      let errorBody = '';
+      githubRes.on('data', chunk => errorBody += chunk);
+      githubRes.on('end', () => {
+        try {
+          const translated = translateOpenAIError(errorBody);
+          res.writeHead(githubRes.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(translated));
+          if (DEBUG) console.log(`  [GitHub Models Response Error] Translated - ${Date.now() - startTime}ms`);
+        } catch (e) {
+          res.writeHead(githubRes.statusCode, { 'Content-Type': 'application/json' });
+          res.end(errorBody);
+        }
+      });
+      return;
+    }
+
+    if (isStreaming) {
+      handleStreamResponse(githubRes, res, startTime, openaiReq);
+    } else {
+      handleNonStreamResponse(githubRes, res, startTime);
+    }
+  });
+
+  githubReq.on('error', (err) => {
+    console.error('  [GitHub Models Error]', err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: `GitHub Models API error: ${err.message}`
+        }
+      }));
+    }
+  });
+
+  githubReq.setTimeout(TIMEOUT);
+  githubReq.write(reqBody);
+  githubReq.end();
 }
 
 /**
@@ -1463,7 +1639,7 @@ const server = http.createServer(handleRequest);
 server.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  Anthropic ↔ OpenAI/Groq/Local Model Proxy (v3.0)        ║
+║  Anthropic ↔ OpenAI/Groq/GitHub/Local Model Proxy (v3.0)  ║
 ╚════════════════════════════════════════════════════════════╝
 
   Listening on http://localhost:${PORT}
@@ -1471,17 +1647,18 @@ server.listen(PORT, () => {
   Endpoints:
     GET  /                         → Web Dashboard
     GET  /health                   → Health check (JSON)
-    POST /v1/messages              → Groq/Local API
+    POST /v1/messages              → API endpoint
     POST /v1/messages/count_tokens → Stub response
     GET  /v1/models                → Model list
 
   Features:
     ✓ Payload compression (fixes 413 error)
+    ✓ Multi-provider support (Groq, GitHub Models, Local)
     ✓ Local model support (Ollama, LM Studio, vLLM)
     ✓ Web dashboard with model tester
     ✓ Health check endpoint
     ✓ Full Anthropic SSE streaming
-    ✓ Latest Groq model mappings (Llama 4 Scout, Llama 3.3, Llama 3.1)
+    ✓ Latest model mappings
     ✓ Request size logging
     ✓ Concurrent streaming (no global state)
 
@@ -1489,8 +1666,10 @@ server.listen(PORT, () => {
     PORT=${PORT}
     TIMEOUT=${TIMEOUT}ms
     DEBUG=${DEBUG}
+    PROVIDER=${PROVIDER}
     LOCAL_MODEL_URL=${LOCAL_MODEL_URL}
-    LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME}
+    LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME}${PROVIDER === 'github' ? `
+    GITHUB_MODELS_TOKEN=${GITHUB_MODELS_TOKEN ? '***' + GITHUB_MODELS_TOKEN.substring(GITHUB_MODELS_TOKEN.length - 4) : 'NOT SET'}` : ''}
 
   Ready for connections...
   `);

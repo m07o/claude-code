@@ -271,6 +271,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
               <div class="card-sub" id="groq-msg">Checking...</div>
             </div>
             <div class="card">
+              <div class="card-title">GitHub Models</div>
+              <div class="card-value" id="github-status">🔄</div>
+              <div class="card-sub" id="github-msg">Checking...</div>
+            </div>
+            <div class="card">
               <div class="card-title">Local Model</div>
               <div class="card-value" id="local-status">🔄</div>
               <div class="card-sub" id="local-msg">Checking...</div>
@@ -344,6 +349,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <div id="settings" class="section">
           <h2>Configuration</h2>
           <div>
+            <label>Active Provider</label>
+            <select id="active-provider" disabled>
+              <option value="groq">Groq (Default)</option>
+              <option value="github">GitHub Models</option>
+              <option value="local">Local Model</option>
+            </select>
+            <div style="color:#888;font-size:11px;margin-top:5px;">💡 To switch providers, set PROVIDER environment variable and restart the proxy</div>
+
             <label>Default Groq Model</label>
             <select id="default-model">
               <option value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout (Coding)</option>
@@ -443,6 +456,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         const resp = await fetch('/health');
         const data = await resp.json();
         updateStatus('groq', data.groq_api);
+        updateStatus('github', data.github_models);
         updateStatus('local', data.local_model);
       } catch (e) {
         console.error('Health check failed:', e);

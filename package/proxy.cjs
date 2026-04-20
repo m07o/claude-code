@@ -70,6 +70,22 @@ const CUSTOM_API_KEY = process.env.CUSTOM_API_KEY || '';
 const CUSTOM_BASE_URL = process.env.CUSTOM_BASE_URL || '';
 const CUSTOM_DEFAULT_MODEL = process.env.CUSTOM_DEFAULT_MODEL || '';
 
+// Chinese AI Provider configurations
+const ZHIPU_ENABLED = process.env.ZHIPU_ENABLED === 'true';
+const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY || '';
+const ZHIPU_BASE_URL = process.env.ZHIPU_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+const ZHIPU_DEFAULT_MODEL = process.env.ZHIPU_DEFAULT_MODEL || 'glm-5';
+
+const MINIMAX_ENABLED = process.env.MINIMAX_ENABLED === 'true';
+const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
+const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.chat/v1/text/chatcompletion_v2';
+const MINIMAX_DEFAULT_MODEL = process.env.MINIMAX_DEFAULT_MODEL || 'MiniMax-Text-01';
+
+const MOONSHOT_ENABLED = process.env.MOONSHOT_ENABLED === 'true';
+const MOONSHOT_API_KEY = process.env.MOONSHOT_API_KEY || '';
+const MOONSHOT_BASE_URL = process.env.MOONSHOT_BASE_URL || 'https://api.moonshot.cn/v1/chat/completions';
+const MOONSHOT_DEFAULT_MODEL = process.env.MOONSHOT_DEFAULT_MODEL || 'kimi-k2-0711-chat';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODEL MAPPING
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -287,6 +303,21 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
               <div class="card-sub" id="custom-msg">Checking...</div>
             </div>
             <div class="card">
+              <div class="card-title">Zhipu AI</div>
+              <div class="card-value" id="zhipu-status">🔄</div>
+              <div class="card-sub" id="zhipu-msg">Checking...</div>
+            </div>
+            <div class="card">
+              <div class="card-title">Minimax</div>
+              <div class="card-value" id="minimax-status">🔄</div>
+              <div class="card-sub" id="minimax-msg">Checking...</div>
+            </div>
+            <div class="card">
+              <div class="card-title">Moonshot AI</div>
+              <div class="card-value" id="moonshot-status">🔄</div>
+              <div class="card-sub" id="moonshot-msg">Checking...</div>
+            </div>
+            <div class="card">
               <div class="card-title">Local Model</div>
               <div class="card-value" id="local-status">🔄</div>
               <div class="card-sub" id="local-msg">Checking...</div>
@@ -482,6 +513,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         updateStatus('groq', data.groq_api);
         updateStatus('github', data.github_models);
         updateStatus('custom', data.custom_provider);
+        updateStatus('zhipu', data.zhipu_ai);
+        updateStatus('minimax', data.minimax);
+        updateStatus('moonshot', data.moonshot_ai);
         updateStatus('local', data.local_model);
       } catch (e) {
         console.error('Health check failed:', e);
@@ -819,7 +853,7 @@ function flattenAnthropicContent(content) {
  * Falls back to original model name if not in map and looks like a direct model
  */
 /**
- * Map Anthropic model names to provider models (Groq/GitHub/Local)
+ * Map Anthropic model names to provider models (Groq/GitHub/Custom/Chinese/Local)
  * Supports provider-aware routing based on PROVIDER environment variable
  * Falls back to original model name if not in map and looks like a direct model
  */
@@ -831,6 +865,15 @@ function mapModel(anthropicModel) {
     }
     if (PROVIDER === 'custom' && CUSTOM_ENABLED) {
       return CUSTOM_DEFAULT_MODEL || DEFAULT_MODEL;
+    }
+    if (PROVIDER === 'zhipu' && ZHIPU_ENABLED) {
+      return ZHIPU_DEFAULT_MODEL;
+    }
+    if (PROVIDER === 'minimax' && MINIMAX_ENABLED) {
+      return MINIMAX_DEFAULT_MODEL;
+    }
+    if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
+      return MOONSHOT_DEFAULT_MODEL;
     }
     return DEFAULT_MODEL;
   }
@@ -850,6 +893,15 @@ function mapModel(anthropicModel) {
     // For custom provider, pass through Claude model names as-is
     // User configures what model names the custom API accepts
     return anthropicModel;
+  } else if (PROVIDER === 'zhipu' && ZHIPU_ENABLED) {
+    // For Zhipu, pass through model name as-is
+    return anthropicModel;
+  } else if (PROVIDER === 'minimax' && MINIMAX_ENABLED) {
+    // For Minimax, pass through model name as-is
+    return anthropicModel;
+  } else if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
+    // For Moonshot, pass through model name as-is
+    return anthropicModel;
   } else {
     // Check Groq model mappings (default provider)
     if (MODEL_MAP[anthropicModel]) {
@@ -868,6 +920,15 @@ function mapModel(anthropicModel) {
   }
   if (PROVIDER === 'custom' && CUSTOM_ENABLED) {
     return CUSTOM_DEFAULT_MODEL || DEFAULT_MODEL;
+  }
+  if (PROVIDER === 'zhipu' && ZHIPU_ENABLED) {
+    return ZHIPU_DEFAULT_MODEL;
+  }
+  if (PROVIDER === 'minimax' && MINIMAX_ENABLED) {
+    return MINIMAX_DEFAULT_MODEL;
+  }
+  if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
+    return MOONSHOT_DEFAULT_MODEL;
   }
   return DEFAULT_MODEL;
 }
@@ -1097,7 +1158,17 @@ function handleRequest(req, res) {
 
   // Handle GET /health
   if (req.method === 'GET' && pathname === '/health') {
-    const health = { proxy: 'running', port: PORT, groq_api: 'unknown', github_models: 'unknown', custom_provider: 'unknown', local_model: 'unknown' };
+    const health = {
+      proxy: 'running',
+      port: PORT,
+      groq_api: 'unknown',
+      github_models: 'unknown',
+      custom_provider: 'unknown',
+      zhipu_ai: 'unknown',
+      minimax: 'unknown',
+      moonshot_ai: 'unknown',
+      local_model: 'unknown'
+    };
 
     // Check Groq connectivity
     https.get('https://api.groq.com/openai/v1/models', {
@@ -1132,6 +1203,48 @@ function handleRequest(req, res) {
       checkDone();
     }
 
+    // Check Zhipu AI connectivity
+    if (ZHIPU_ENABLED && ZHIPU_BASE_URL) {
+      try {
+        const zu = new URL(ZHIPU_BASE_URL);
+        https.get({ hostname: zu.hostname, port: zu.port || 443, path: zu.pathname.replace('/chat/completions', '/models'), timeout: 3000, headers: { 'Authorization': `Bearer ${ZHIPU_API_KEY}` } }, (r) => {
+          health.zhipu_ai = r.statusCode < 400 ? 'connected' : 'error_' + r.statusCode;
+          checkDone();
+        }).on('error', () => { health.zhipu_ai = 'unreachable'; checkDone(); });
+      } catch(e) { health.zhipu_ai = 'unreachable'; checkDone(); }
+    } else {
+      health.zhipu_ai = PROVIDER === 'zhipu' ? 'not_configured' : 'disabled';
+      checkDone();
+    }
+
+    // Check Minimax connectivity
+    if (MINIMAX_ENABLED && MINIMAX_BASE_URL) {
+      try {
+        const mu = new URL(MINIMAX_BASE_URL);
+        https.get({ hostname: mu.hostname, port: mu.port || 443, path: mu.pathname.replace('/chatcompletion_v2', '/models'), timeout: 3000, headers: { 'Authorization': `Bearer ${MINIMAX_API_KEY}` } }, (r) => {
+          health.minimax = r.statusCode < 400 ? 'connected' : 'error_' + r.statusCode;
+          checkDone();
+        }).on('error', () => { health.minimax = 'unreachable'; checkDone(); });
+      } catch(e) { health.minimax = 'unreachable'; checkDone(); }
+    } else {
+      health.minimax = PROVIDER === 'minimax' ? 'not_configured' : 'disabled';
+      checkDone();
+    }
+
+    // Check Moonshot AI connectivity
+    if (MOONSHOT_ENABLED && MOONSHOT_BASE_URL) {
+      try {
+        const mo = new URL(MOONSHOT_BASE_URL);
+        https.get({ hostname: mo.hostname, port: mo.port || 443, path: mo.pathname.replace('/chat/completions', '/models'), timeout: 3000, headers: { 'Authorization': `Bearer ${MOONSHOT_API_KEY}` } }, (r) => {
+          health.moonshot_ai = r.statusCode < 400 ? 'connected' : 'error_' + r.statusCode;
+          checkDone();
+        }).on('error', () => { health.moonshot_ai = 'unreachable'; checkDone(); });
+      } catch(e) { health.moonshot_ai = 'unreachable'; checkDone(); }
+    } else {
+      health.moonshot_ai = PROVIDER === 'moonshot' ? 'not_configured' : 'disabled';
+      checkDone();
+    }
+
     // Check local model connectivity
     try {
       const lu = new URL(LOCAL_MODEL_URL);
@@ -1142,7 +1255,7 @@ function handleRequest(req, res) {
     } catch(e) { health.local_model = 'unreachable'; checkDone(); }
 
     let checks = 0;
-    function checkDone() { if (++checks === 4) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
+    function checkDone() { if (++checks === 7) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
     return;
   }
 
@@ -1168,7 +1281,7 @@ function handleRequest(req, res) {
  * Forward request to Groq or Local model API with response translation
  */
 /**
- * Forward request to appropriate provider (Groq, GitHub Models, Custom, or Local)
+ * Forward request to appropriate provider (Groq, GitHub Models, Custom, Chinese, or Local)
  */
 function forwardRequest(mappedModel, openaiReq, res, isStreaming, startTime) {
   if (isLocalModel(mappedModel)) {
@@ -1180,6 +1293,15 @@ function forwardRequest(mappedModel, openaiReq, res, isStreaming, startTime) {
   } else if (PROVIDER === 'custom' && CUSTOM_ENABLED) {
     // Forward to custom provider
     forwardToCustom(openaiReq, res, isStreaming, startTime);
+  } else if (PROVIDER === 'zhipu' && ZHIPU_ENABLED) {
+    // Forward to Zhipu AI
+    forwardToChinese(openaiReq, res, isStreaming, startTime, 'zhipu', ZHIPU_API_KEY, ZHIPU_BASE_URL);
+  } else if (PROVIDER === 'minimax' && MINIMAX_ENABLED) {
+    // Forward to Minimax
+    forwardToChinese(openaiReq, res, isStreaming, startTime, 'minimax', MINIMAX_API_KEY, MINIMAX_BASE_URL);
+  } else if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
+    // Forward to Moonshot AI
+    forwardToChinese(openaiReq, res, isStreaming, startTime, 'moonshot', MOONSHOT_API_KEY, MOONSHOT_BASE_URL);
   } else {
     // Forward to Groq (default)
     forwardToGroq(openaiReq, res, isStreaming, startTime);
@@ -1583,6 +1705,131 @@ function forwardToCustom(openaiReq, res, isStreaming, startTime) {
 }
 
 /**
+ * Forward request to Chinese AI providers (Zhipu, Minimax, Moonshot)
+ * All use OpenAI-compatible API format
+ */
+function forwardToChinese(openaiReq, res, isStreaming, startTime, providerName, apiKey, baseUrl) {
+  if (!baseUrl) {
+    console.error(`  [${providerName}] Base URL not set`);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'configuration_error',
+          message: `${providerName.toUpperCase()}_BASE_URL not configured`
+        }
+      }));
+    }
+    return;
+  }
+
+  if (!apiKey) {
+    console.error(`  [${providerName}] API key not set`);
+    if (!res.headersSent) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'authentication_error',
+          message: `${providerName.toUpperCase()}_API_KEY not set`
+        }
+      }));
+    }
+    return;
+  }
+
+  // Parse URL
+  const url = new URL(baseUrl);
+  const isHttps = url.protocol === 'https:';
+  const httpModule = isHttps ? https : http;
+
+  // Compress payload to fix 413 error
+  openaiReq = compressPayload(openaiReq);
+
+  const reqBody = JSON.stringify(openaiReq);
+  const bodySize = Buffer.byteLength(reqBody);
+
+  if (DEBUG) {
+    console.log(`  [Request] Body size: ${(bodySize / 1024).toFixed(1)} KB`);
+    console.log(`  [Request] Messages: ${openaiReq.messages.length}`);
+  }
+  console.log(`  [${providerName}] URL: ${url.hostname}${url.pathname}`);
+  console.log(`  [${providerName}] Model: ${openaiReq.model}`);
+  console.log(`  [${providerName}] Size: ${bodySize} bytes, Stream: ${isStreaming}`);
+
+  // Build headers
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(reqBody),
+    'User-Agent': 'Anthropic-to-OpenAI-Proxy/3.1'
+  };
+
+  // Add API key with appropriate header format
+  if (providerName === 'minimax') {
+    // Minimax uses Authorization header
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  } else {
+    // Zhipu and Moonshot use Authorization header as well
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const options = {
+    hostname: url.hostname,
+    port: url.port || (isHttps ? 443 : 80),
+    path: url.pathname + (url.search || ''),
+    method: 'POST',
+    headers
+  };
+
+  const chineseReq = httpModule.request(options, (chineseRes) => {
+    if (DEBUG) console.log(`  [${providerName}] Status: ${chineseRes.statusCode}`);
+
+    // Handle non-200 responses
+    if (chineseRes.statusCode !== 200) {
+      let errorBody = '';
+      chineseRes.on('data', chunk => errorBody += chunk);
+      chineseRes.on('end', () => {
+        try {
+          const translated = translateOpenAIError(errorBody);
+          res.writeHead(chineseRes.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(translated));
+          if (DEBUG) console.log(`  [${providerName} Response Error] Translated - ${Date.now() - startTime}ms`);
+        } catch (e) {
+          res.writeHead(chineseRes.statusCode, { 'Content-Type': 'application/json' });
+          res.end(errorBody);
+        }
+      });
+      return;
+    }
+
+    if (isStreaming) {
+      handleStreamResponse(chineseRes, res, startTime, openaiReq);
+    } else {
+      handleNonStreamResponse(chineseRes, res, startTime);
+    }
+  });
+
+  chineseReq.on('error', (err) => {
+    console.error(`  [${providerName} Error]`, err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'api_error',
+          message: `${providerName} provider error: ${err.message}`
+        }
+      }));
+    }
+  });
+
+  chineseReq.setTimeout(TIMEOUT);
+  chineseReq.write(reqBody);
+  chineseReq.end();
+}
+
+/**
  * Handle streaming response from Groq - convert SSE to Anthropic format
  * FIXED: streamState is now LOCAL per-request (not global)
  * FIXED: All events now include event: field and ping interval for keep-alive
@@ -1810,9 +2057,9 @@ const server = http.createServer(handleRequest);
 
 server.listen(PORT, () => {
   console.log(`
-╔════════════════════════════════════════════════════════════╗
-║  Anthropic ↔ OpenAI/Groq/GitHub/Custom/Local Proxy (v3.1) ║
-╚════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════╗
+║  Anthropic ↔ OpenAI/Groq/GitHub/Custom/Chinese/Local Proxy (v3.2)  ║
+╚══════════════════════════════════════════════════════════════════════╝
 
   Listening on http://localhost:${PORT}
 
@@ -1825,7 +2072,8 @@ server.listen(PORT, () => {
 
   Features:
     ✓ Payload compression (fixes 413 error)
-    ✓ Multi-provider support (Groq, GitHub Models, Custom, Local)
+    ✓ Multi-provider support (Groq, GitHub, Custom, Chinese AI, Local)
+    ✓ Chinese AI providers (Zhipu, Minimax, Moonshot)
     ✓ Custom provider (ANY OpenAI-compatible API)
     ✓ Local model support (Ollama, LM Studio, vLLM)
     ✓ Web dashboard with model tester
@@ -1844,7 +2092,13 @@ server.listen(PORT, () => {
     LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME}${PROVIDER === 'github' ? `
     GITHUB_MODELS_TOKEN=${GITHUB_MODELS_TOKEN ? '***' + GITHUB_MODELS_TOKEN.substring(GITHUB_MODELS_TOKEN.length - 4) : 'NOT SET'}` : ''}${PROVIDER === 'custom' ? `
     CUSTOM_BASE_URL=${CUSTOM_BASE_URL || 'NOT SET'}
-    CUSTOM_DEFAULT_MODEL=${CUSTOM_DEFAULT_MODEL || 'NOT SET'}` : ''}
+    CUSTOM_DEFAULT_MODEL=${CUSTOM_DEFAULT_MODEL || 'NOT SET'}` : ''}${PROVIDER === 'zhipu' ? `
+    ZHIPU_BASE_URL=${ZHIPU_BASE_URL}
+    ZHIPU_DEFAULT_MODEL=${ZHIPU_DEFAULT_MODEL}` : ''}${PROVIDER === 'minimax' ? `
+    MINIMAX_BASE_URL=${MINIMAX_BASE_URL}
+    MINIMAX_DEFAULT_MODEL=${MINIMAX_DEFAULT_MODEL}` : ''}${PROVIDER === 'moonshot' ? `
+    MOONSHOT_BASE_URL=${MOONSHOT_BASE_URL}
+    MOONSHOT_DEFAULT_MODEL=${MOONSHOT_DEFAULT_MODEL}` : ''}
 
   Ready for connections...
   `);

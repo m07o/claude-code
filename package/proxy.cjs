@@ -86,6 +86,12 @@ const MOONSHOT_API_KEY = process.env.MOONSHOT_API_KEY || '';
 const MOONSHOT_BASE_URL = process.env.MOONSHOT_BASE_URL || 'https://api.moonshot.cn/v1/chat/completions';
 const MOONSHOT_DEFAULT_MODEL = process.env.MOONSHOT_DEFAULT_MODEL || 'kimi-k2-0711-chat';
 
+// Ollama Cloud configuration
+const OLLAMA_CLOUD_ENABLED = process.env.OLLAMA_CLOUD_ENABLED === 'true';
+const OLLAMA_CLOUD_API_KEY = process.env.OLLAMA_CLOUD_API_KEY || '';
+const OLLAMA_CLOUD_BASE_URL = process.env.OLLAMA_CLOUD_BASE_URL || 'https://api.ollama.cloud/v1/chat/completions';
+const OLLAMA_CLOUD_DEFAULT_MODEL = process.env.OLLAMA_CLOUD_DEFAULT_MODEL || 'llama2';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODEL MAPPING
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -318,6 +324,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
               <div class="card-sub" id="moonshot-msg">Checking...</div>
             </div>
             <div class="card">
+              <div class="card-title">Ollama Cloud</div>
+              <div class="card-value" id="ollama-cloud-status">🔄</div>
+              <div class="card-sub" id="ollama-cloud-msg">Checking...</div>
+            </div>
+            <div class="card">
               <div class="card-title">Local Model</div>
               <div class="card-value" id="local-status">🔄</div>
               <div class="card-sub" id="local-msg">Checking...</div>
@@ -516,6 +527,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         updateStatus('zhipu', data.zhipu_ai);
         updateStatus('minimax', data.minimax);
         updateStatus('moonshot', data.moonshot_ai);
+        updateStatus('ollama-cloud', data.ollama_cloud);
         updateStatus('local', data.local_model);
       } catch (e) {
         console.error('Health check failed:', e);
@@ -853,7 +865,7 @@ function flattenAnthropicContent(content) {
  * Falls back to original model name if not in map and looks like a direct model
  */
 /**
- * Map Anthropic model names to provider models (Groq/GitHub/Custom/Chinese/Local)
+ * Map Anthropic model names to provider models (Groq/GitHub/Custom/Chinese/Ollama Cloud/Local)
  * Supports provider-aware routing based on PROVIDER environment variable
  * Falls back to original model name if not in map and looks like a direct model
  */
@@ -874,6 +886,9 @@ function mapModel(anthropicModel) {
     }
     if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
       return MOONSHOT_DEFAULT_MODEL;
+    }
+    if (PROVIDER === 'ollama-cloud' && OLLAMA_CLOUD_ENABLED) {
+      return OLLAMA_CLOUD_DEFAULT_MODEL;
     }
     return DEFAULT_MODEL;
   }
@@ -902,6 +917,9 @@ function mapModel(anthropicModel) {
   } else if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
     // For Moonshot, pass through model name as-is
     return anthropicModel;
+  } else if (PROVIDER === 'ollama-cloud' && OLLAMA_CLOUD_ENABLED) {
+    // For Ollama Cloud, pass through model name as-is
+    return anthropicModel;
   } else {
     // Check Groq model mappings (default provider)
     if (MODEL_MAP[anthropicModel]) {
@@ -929,6 +947,9 @@ function mapModel(anthropicModel) {
   }
   if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
     return MOONSHOT_DEFAULT_MODEL;
+  }
+  if (PROVIDER === 'ollama-cloud' && OLLAMA_CLOUD_ENABLED) {
+    return OLLAMA_CLOUD_DEFAULT_MODEL;
   }
   return DEFAULT_MODEL;
 }
@@ -1167,6 +1188,7 @@ function handleRequest(req, res) {
       zhipu_ai: 'unknown',
       minimax: 'unknown',
       moonshot_ai: 'unknown',
+      ollama_cloud: 'unknown',
       local_model: 'unknown'
     };
 
@@ -1245,6 +1267,21 @@ function handleRequest(req, res) {
       checkDone();
     }
 
+    // Check Ollama Cloud connectivity
+    if (OLLAMA_CLOUD_ENABLED && OLLAMA_CLOUD_BASE_URL) {
+      try {
+        const oc = new URL(OLLAMA_CLOUD_BASE_URL);
+        const mod = oc.protocol === 'https:' ? https : http;
+        mod.get({ hostname: oc.hostname, port: oc.port || (oc.protocol === 'https:' ? 443 : 80), path: oc.pathname.replace('/chat/completions', '/models'), timeout: 3000, headers: { 'Authorization': `Bearer ${OLLAMA_CLOUD_API_KEY}` } }, (r) => {
+          health.ollama_cloud = r.statusCode < 400 ? 'connected' : 'error_' + r.statusCode;
+          checkDone();
+        }).on('error', () => { health.ollama_cloud = 'unreachable'; checkDone(); });
+      } catch(e) { health.ollama_cloud = 'unreachable'; checkDone(); }
+    } else {
+      health.ollama_cloud = PROVIDER === 'ollama-cloud' ? 'not_configured' : 'disabled';
+      checkDone();
+    }
+
     // Check local model connectivity
     try {
       const lu = new URL(LOCAL_MODEL_URL);
@@ -1255,7 +1292,7 @@ function handleRequest(req, res) {
     } catch(e) { health.local_model = 'unreachable'; checkDone(); }
 
     let checks = 0;
-    function checkDone() { if (++checks === 7) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
+    function checkDone() { if (++checks === 8) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(health,null,2)); } }
     return;
   }
 
@@ -1281,7 +1318,7 @@ function handleRequest(req, res) {
  * Forward request to Groq or Local model API with response translation
  */
 /**
- * Forward request to appropriate provider (Groq, GitHub Models, Custom, Chinese, or Local)
+ * Forward request to appropriate provider (Groq, GitHub Models, Custom, Chinese, Ollama Cloud, or Local)
  */
 function forwardRequest(mappedModel, openaiReq, res, isStreaming, startTime) {
   if (isLocalModel(mappedModel)) {
@@ -1302,6 +1339,9 @@ function forwardRequest(mappedModel, openaiReq, res, isStreaming, startTime) {
   } else if (PROVIDER === 'moonshot' && MOONSHOT_ENABLED) {
     // Forward to Moonshot AI
     forwardToChinese(openaiReq, res, isStreaming, startTime, 'moonshot', MOONSHOT_API_KEY, MOONSHOT_BASE_URL);
+  } else if (PROVIDER === 'ollama-cloud' && OLLAMA_CLOUD_ENABLED) {
+    // Forward to Ollama Cloud
+    forwardToCustom(openaiReq, res, isStreaming, startTime, 'ollama-cloud', OLLAMA_CLOUD_API_KEY, OLLAMA_CLOUD_BASE_URL);
   } else {
     // Forward to Groq (default)
     forwardToGroq(openaiReq, res, isStreaming, startTime);
@@ -2057,9 +2097,9 @@ const server = http.createServer(handleRequest);
 
 server.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════════════════════════════════════╗
-║  Anthropic ↔ OpenAI/Groq/GitHub/Custom/Chinese/Local Proxy (v3.2)  ║
-╚══════════════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  Anthropic ↔ OpenAI/Groq/GitHub/Custom/Chinese/Ollama Cloud (v3.3)     ║
+╚═══════════════════════════════════════════════════════════════════════════╝
 
   Listening on http://localhost:${PORT}
 
@@ -2072,8 +2112,9 @@ server.listen(PORT, () => {
 
   Features:
     ✓ Payload compression (fixes 413 error)
-    ✓ Multi-provider support (Groq, GitHub, Custom, Chinese AI, Local)
+    ✓ Multi-provider support (Groq, GitHub, Custom, Chinese AI, Ollama Cloud, Local)
     ✓ Chinese AI providers (Zhipu, Minimax, Moonshot)
+    ✓ Ollama Cloud Inference API support
     ✓ Custom provider (ANY OpenAI-compatible API)
     ✓ Local model support (Ollama, LM Studio, vLLM)
     ✓ Web dashboard with model tester
@@ -2098,7 +2139,9 @@ server.listen(PORT, () => {
     MINIMAX_BASE_URL=${MINIMAX_BASE_URL}
     MINIMAX_DEFAULT_MODEL=${MINIMAX_DEFAULT_MODEL}` : ''}${PROVIDER === 'moonshot' ? `
     MOONSHOT_BASE_URL=${MOONSHOT_BASE_URL}
-    MOONSHOT_DEFAULT_MODEL=${MOONSHOT_DEFAULT_MODEL}` : ''}
+    MOONSHOT_DEFAULT_MODEL=${MOONSHOT_DEFAULT_MODEL}` : ''}${PROVIDER === 'ollama-cloud' ? `
+    OLLAMA_CLOUD_BASE_URL=${OLLAMA_CLOUD_BASE_URL}
+    OLLAMA_CLOUD_DEFAULT_MODEL=${OLLAMA_CLOUD_DEFAULT_MODEL}` : ''}
 
   Ready for connections...
   `);
